@@ -15,14 +15,20 @@ Text::Record::Deduper - Separate complete, partial and near duplicate text recor
     $deduper->field_separator(',');
     $deduper->add_key(field_number => 1, ignore_case => 1 );
     $deduper->add_key(field_number => 2, ignore_whitespace => 1);
+    # unique records go to file names_uniqs.csv, dupes to names_dupes.csv
+    $deduper->dedupe_file('names.csv');
 
     # Find 'near' dupes by allowing for given name aliases
     my %nick_names = (Bob => 'Robert',Rob => 'Robert');
     my $near_deduper = new Text::Record::Deduper();
     $near_deduper->add_key(field_number => 2, alias => \%nick_names) or die;
-    $near_deduper->dedupe_file("names.txt");
+    $near_deduper->dedupe_file('names.txt');
 
-    # Now find 'near' dupes in an array of records
+    # Create a text report, names_report.txt to identify all duplicates
+    $near_deduper->report_file('names.txt',all_records => 1);
+
+    # Find 'near' dupes in an array of records, returning references 
+    # to a unique and a duplicate array
     my ($uniqs,$dupes) = $near_deduper->dedupe_array(\@some_records);
 
 
@@ -143,10 +149,51 @@ processed to detect duplicates, as defined by the methods above. Two array
 references are retuned, the first to the set of unique records and the second 
 to the set of duplicates.
 
-Note that the memory constraints of your system may prvent you from processing 
+Note that the memory constraints of your system may prevent you from processing 
 very large arrays.
 
     my ($unique_records,duplicate_records) = $deduper->dedupe_array(\@some_records);
+
+
+=head2 report_file
+
+This method takes a file name F<basename.ext> as it's initial argument. 
+
+A text report is produced with the following columns
+
+    record number : the line number of the record
+
+    key : the key values that define record uniqueness
+
+    type: the type of record
+            unique    : record only occurs once
+            identical : record occurs more than once, first occurence has parent record number of 0
+            alias     : record occurs more than once, after alias substitutions have been applied
+
+    parent record number : the line number of the record that THIS record is a duplicate of.
+
+By default, the report file name is  F<basename_report.ext>.
+
+Various  setup options may be defined in a hash that is passed as an optional argument to 
+the C<report_file> method. Note that all the arguments are optional. They include
+
+=over 4
+
+=item all_records 
+
+When this option is set to a positive value, all records will be included in
+the report. If this value is not set, only the duplicate records will be included 
+in the report 
+
+=back
+
+
+    $deduper->report_file("orig.txt",all_records => 0)
+
+=head2 report_array
+
+This method takes an array as it's initial argument. The behaviour is the same as
+C<report_file> above except that the report file is named F<deduper_array_report.txt>
 
 =head1 EXAMPLES
 
@@ -179,7 +226,6 @@ The array reference $dupe now contains
     'John.Smith@xyz.com'
 
 
-
 =head2 Dedupe a file of fixed width records 
 
 Given a text file F<names.txt> with space separated values and duplicates defined 
@@ -197,25 +243,38 @@ by the second and third columns:
 
     my %nick_names = (Bob => 'Robert',Rob => 'Robert');
     my $near_deduper = new Text::Record::Deduper();
-    $near_deduper->field_separator(' ');
-    $near_deduper->add_key(field_number => 2, alias => \%nick_names) or die;
-    $near_deduper->add_key(field_number => 3) or die;
+    $near_deduper->add_key(start_pos =>  5, key_length => 9, ignore_whitespace => 1, alias => \%nick_names) or die;
+    $near_deduper->add_key(start_pos => 14, key_length => 9,) or die;
     $near_deduper->dedupe_file("names.txt");
+    $near_deduper->report_file("names.txt");
+
 
 Text::Record::Deduper will produce a file of unique records, F<names_uniqs.txt>
+in the same directory as F<names.txt>.
 
     101 Robert   Smith    
     102 John     Brown    
     103 Jack     White   
     104 Bob      Smythe    
+       
 
-and a file of duplicates, F<names_dupes.txt>
+and a file of duplicates, F<names_dupes.txt> in the same directory as F<names.txt>
 
     100 Bob      Smith    
     105 Robert   Smith   
 
 The original file, F<names.txt> is left intact.
 
+A report file F<names_report.txt>, is created in the same directory as F<names.txt>
+
+    Number Key                            Type       Parent Parent Key                    
+    --------------------------------------------------------------------------------
+         1 Bob_Smith                      alias           2 Robert_Smith                  
+         2 Robert_Smith                   identical       0                               
+         3 John_Brown                     unique          0                               
+         4 Jack_White                     unique          0                               
+         5 Bob_Smythe                     unique          0                               
+         6 Robert_Smith                   identical       2 Robert_Smith                  
 
 
 =head1 TO DO
@@ -263,7 +322,7 @@ use warnings;
 require Exporter;
 
 our @ISA = qw(Exporter);
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 
 #-------------------------------------------------------------------------------
@@ -380,29 +439,9 @@ sub dedupe_file
     my $deduper = shift;
     my ($input_file_name) = @_;
 
-    my($files_ok,$file_handles_ref) = _open_files($input_file_name);
-    unless ( $files_ok )
-    {
-        return;
-    }
-
-    _dedupe($deduper,'file',undef,$file_handles_ref);
-    # Close off all files
-    foreach my $file ( keys %$file_handles_ref )
-    {
-        $file_handles_ref->{$file}->close;
-    }
-}
-
-#-------------------------------------------------------------------------------
-# 
-sub _open_files
-{
-    my ($input_file_name) = @_;
-
     unless ( -T $input_file_name and -s $input_file_name )
     {
-        warn("Could not open input file: $input_file_name"); 
+        warn("Could not find input file: $input_file_name"); 
         return(0);
     }
 
@@ -414,9 +453,8 @@ sub _open_files
     }
 
     my ($file_name,$path,$suffix) = File::Basename::fileparse($input_file_name,qr{\..*});
-
-    my $file_name_unique_records    = "$path/$file_name\_uniqs$suffix";
-    my $file_name_duplicate_records = "$path/$file_name\_dupes$suffix";
+    my $file_name_unique_records    = "$path$file_name\_uniqs$suffix";
+    my $file_name_duplicate_records = "$path$file_name\_dupes$suffix";
 
     # TO DO!!! test for overwriting of previous Deduper output
     my $unique_fh = new FileHandle ">$file_name_unique_records";
@@ -432,24 +470,21 @@ sub _open_files
         warn "Could not open file: $file_name_duplicate_records: $!";
         return(0);
     }
-    my $file_handles_ref = {};
-    $file_handles_ref->{input} = $input_fh;
-    $file_handles_ref->{output_unique} = $unique_fh;
-    $file_handles_ref->{output_dupe} = $dupes_fh;
-    return(1,$file_handles_ref);
+
+    my ($master_record_index) = $deduper->_analyse('file',undef,$input_fh);
+    $deduper->_separate('file',$master_record_index,undef,$input_fh,$unique_fh,$dupes_fh);
+
+    $input_fh->close;
+    $unique_fh->close;
+    $dupes_fh->close;
 }
 #-------------------------------------------------------------------------------
 
 sub _rewind_file
 {
-    my ($storage_type,$file_handles_ref) = @_;
-    if ( $storage_type eq 'file' )
-    {
-        my $input_fh = $file_handles_ref->{input};
-        $input_fh->seek(0,0); # rewind file
-    }
+    my ($input_fh) = @_;
+    $input_fh->seek(0,0); # rewind file
 }
-
 #-------------------------------------------------------------------------------
 #                  
 sub dedupe_array
@@ -457,16 +492,133 @@ sub dedupe_array
     my $deduper = shift;
 
     my ($input_array_ref) = @_;
-    my ($uniq,$dupe) = _dedupe($deduper,'array',$input_array_ref,undef);
-    return($uniq,$dupe);
+    my ($master_record_index) = $deduper->_analyse('array',$input_array_ref,undef);
+    my ($uniq_array_ref,$dupe_array_ref) = $deduper->_separate('array',$master_record_index,$input_array_ref,undef);
+
+    return($uniq_array_ref,$dupe_array_ref);
 }
 #-------------------------------------------------------------------------------
 #                  
-sub _dedupe
+sub report_file
 {
-    my ($deduper,$storage_type,$input_array_ref,$file_handles_ref) = @_;
 
-    my $record_number = 0;
+    my $deduper = shift;
+    my ($input_file_name,%report_options) = @_;
+
+    unless ( -T $input_file_name and -s $input_file_name )
+    {
+        warn("Could not find input file: $input_file_name"); 
+        return(0);
+    }
+
+    my $input_fh = new FileHandle "<$input_file_name";
+    unless ($input_fh)
+    {
+        warn "Could not open input file: $input_file_name";
+        return(0);
+    }
+
+    my ($master_record_index_ref) = $deduper->_analyse('file',undef,$input_fh);
+
+    my $report_file_name;
+    if ( $report_options{file_name} )
+    {
+        # user has specified name and  path to report file
+        $report_file_name = $report_options{file_name};
+    }
+    else
+    {
+        # use base of input file, append _report.txt to report file name
+        my ($file_name,$path,$suffix) = File::Basename::fileparse($input_file_name,qr{\..*});
+        $report_file_name = "$path$file_name\_report\.txt";
+    }
+
+
+    $deduper->_report($master_record_index_ref,$report_file_name,%report_options);
+    $input_fh->close;
+
+}
+#-------------------------------------------------------------------------------
+#                  
+sub report_array
+{
+
+    my $deduper = shift;
+    my ($input_array_ref,%report_options) = @_;
+
+    my ($master_record_index_ref) = $deduper->_analyse('array',$input_array_ref,undef);
+
+    my $report_file_name;
+    if ( $report_options{file_name} )
+    {
+        # user has specified name and  path to report file
+        $report_file_name = $report_options{file_name};
+    }
+    else
+    {
+        # TO DO, make name more unique, eg add time stamp
+        $report_file_name = "./deduper_array_report.txt";
+    }
+
+    $deduper->_report($master_record_index_ref,$report_file_name,%report_options);
+
+}
+#-------------------------------------------------------------------------------
+#                  
+sub _report
+{
+    my $deduper = shift;
+    my ($master_record_index_ref,$report_file_name,%report_options) = @_;
+
+    
+    my $report_fh = new FileHandle ">$report_file_name";
+    unless($report_fh)
+    {
+        warn "Could not open report file: $report_file_name: $!";
+        return(0);
+    }
+
+    # TO DO, report format, side be side or interleaved?
+    # options, all records or dupes (default), group all dupes even first
+    # full record dump, not just key
+
+    my $current_line = sprintf("%6s %-30.30s %-10.10s %6s %-30.30s\n",
+        'Number', 'Key','Type','Parent','Parent Key');
+    $report_fh->print($current_line);
+    $report_fh->print('-' x 80,"\n");
+
+    foreach my $record_num ( sort { $a <=> $b } keys %$master_record_index_ref )
+    {
+        
+        if ( $report_options{all_records} or 
+             ($master_record_index_ref->{$record_num}->{type} ne 'unique' and 
+              $master_record_index_ref->{$record_num}->{parent} > 0  ) )
+        {
+            my $parent_record_key = '';
+            if ( $master_record_index_ref->{$record_num}->{parent} )
+            {
+                $parent_record_key = $master_record_index_ref->{$master_record_index_ref->{$record_num}->{parent}}->{key};
+            }
+            my $current_line = sprintf("%6d %-30.30s %-10.10s %6d %-30.30s\n",
+                $record_num,
+                $master_record_index_ref->{$record_num}->{key},
+                $master_record_index_ref->{$record_num}->{type},
+                $master_record_index_ref->{$record_num}->{parent},
+                $parent_record_key);
+
+            $report_fh->print($current_line);
+        }
+    }
+    $report_fh->close;
+}
+#-------------------------------------------------------------------------------
+#                  
+sub _analyse
+{
+    my $deduper = shift;
+    my ($storage_type,$input_array_ref,$input_fh) = @_;
+
+    my $current_record_number = 0;
     my $current_line;
     my $finished = 0;
 
@@ -474,65 +626,78 @@ sub _dedupe
     my %alias_candidates;
     if ( $deduper->{alias} )
     {
-        my %all_alias_values = _get_all_alias_values($deduper);
+        my %all_alias_values = $deduper->_get_all_alias_values;
         while ( not $finished )
         {
-            ($current_line,$finished) = _read_one_record($storage_type,$record_number,$input_array_ref,$file_handles_ref);
-            $record_number++;
-            if ( my $alias_candidate_key = _alias_candidate($deduper,$current_line,%all_alias_values) )
+            ($current_line,$finished) = _read_one_record($storage_type,$current_record_number,$input_array_ref,$input_fh);
+            $current_record_number++;
+            my $alias_candidate_key = $deduper->_alias_candidate($current_line,%all_alias_values);
+            if ( $alias_candidate_key and not $alias_candidates{$alias_candidate_key}  )
             {
-                $alias_candidates{$alias_candidate_key} = $record_number;
+                $alias_candidates{$alias_candidate_key} = $current_record_number;
             }
         }
     }
+    # print(Dumper(\%alias_candidates));
+    # die;
 
     my %seen_exact_dupes;
     my $unique_ref = [];
     my $dupe_ref = [];
-    $record_number = 0;
+    $current_record_number = 0;
+    my %master_record_index;
 
     $finished = 0;
-    _rewind_file($storage_type,$file_handles_ref);
+    if ( $storage_type eq 'file' and $deduper->{alias} )
+    {
+        _rewind_file($input_fh);
+    }
+
     while ( not $finished )
     {
-        ($current_line,$finished) = _read_one_record($storage_type,$record_number,$input_array_ref,$file_handles_ref);
-        $record_number++;
+        ($current_line,$finished) = _read_one_record($storage_type,$current_record_number,$input_array_ref,$input_fh);
+        $current_record_number++;
 
         my $dupe_type;
-        my %record_keys = _get_key_fields($deduper,$current_line);
+        my %record_keys = $deduper->_get_key_fields($current_line);
         
 
-        %record_keys =_transform_key_fields($deduper,%record_keys);
+        %record_keys = $deduper->_transform_key_fields(%record_keys);
         my $full_key = _assemble_full_key(%record_keys);
-        if ( _alias_dupe($deduper,\%alias_candidates,%record_keys) )
+
+        my $parent_record_number;
+        if ( $parent_record_number = $deduper->_alias_dupe(\%alias_candidates,%record_keys) )
         {
-            $dupe_type = 'alias_dupe';
+            $dupe_type = 'alias';
         }
         # add soundex dupe
         # add string approx dupe
-        elsif ( _exact_dupe($current_line,$full_key,%seen_exact_dupes) )
+        elsif ( $parent_record_number = _exact_dupe($current_line,$full_key,%seen_exact_dupes) )
         {
-            $dupe_type = 'exact_dupe';
+            $dupe_type = 'identical';
         }
         else
         {
             $dupe_type = 'unique';
             # retain the record number of dupe, useful for detailed reporting and grouping
-            $seen_exact_dupes{$full_key} = $record_number;
+            $seen_exact_dupes{$full_key} = $current_record_number;
+            $parent_record_number = 0;
         }
 
-        _write_one_record($storage_type,$dupe_type,$current_line,$file_handles_ref,$unique_ref,$dupe_ref);
+        _classify_record($dupe_type,$parent_record_number,$current_record_number,$full_key,\%master_record_index);
     }
-    return($unique_ref,$dupe_ref);
+    return(\%master_record_index);
+    
 }
 
 #-------------------------------------------------------------------------------
 sub _alias_candidate
 {
-    my ($deduper,$current_line,%all_alias_values) = @_;
+    my $deduper = shift;
+    my ($current_line,%all_alias_values) = @_;
 
-    my %record_keys = _get_key_fields($deduper,$current_line);
-    %record_keys = _transform_key_fields($deduper,%record_keys);
+    my %record_keys = $deduper->_get_key_fields($current_line);
+    %record_keys = $deduper->_transform_key_fields(%record_keys);
     
     my $alias_candidate_key = '';
     foreach my $current_key ( sort keys %record_keys )  
@@ -562,7 +727,7 @@ sub _alias_candidate
 # 
 sub _get_all_alias_values
 {
-    my ($deduper) = @_;
+    my $deduper = shift;
 
     my %all_alias_values;
 
@@ -588,7 +753,9 @@ sub _get_all_alias_values
 
 sub _get_key_fields
 {
-    my ($deduper,$current_line) = @_;
+
+    my $deduper = shift;
+    my ($current_line) = @_;
 
     my %record_keys;
 
@@ -668,7 +835,8 @@ sub _get_key_fields
 
 sub _transform_key_fields
 {
-    my ($deduper,%record_keys) = @_;
+    my $deduper = shift;
+    my (%record_keys) = @_;
 
     if ( $deduper->{ignore_whitespace} )
     {
@@ -699,10 +867,12 @@ sub _assemble_full_key
 {
     my (%record_keys) = @_;
     my $full_key;
+    my @each_key;
     foreach my $current_key ( sort keys %record_keys )
     {
-        $full_key .= $record_keys{$current_key} . ':';
+        push(@each_key,$record_keys{$current_key});
     }
+    $full_key = join('_',@each_key);
     return($full_key);
 
 }
@@ -711,7 +881,8 @@ sub _assemble_full_key
 
 sub _alias_dupe
 {
-    my ($deduper,$alias_candidates_ref,%record_keys) = @_;
+    my $deduper = shift;
+    my ($alias_candidates_ref,%record_keys) = @_;
 
 
     my $alias_dupe = 0;
@@ -739,13 +910,13 @@ sub _alias_dupe
             {
                 $full_key .= $record_keys{$current_key} . ':';
             }
-            # print("full key: ",Dumper($full_key));
             if ( $alias_candidates_ref->{$full_key} )
             {
-                $alias_dupe = 1;
+                $alias_dupe = $alias_candidates_ref->{$full_key};
             }
         }
     }
+    # returns the number of the orignal unique record for which this current record is an alias dupe of
     return($alias_dupe);
 }
 #-------------------------------------------------------------------------------
@@ -753,11 +924,12 @@ sub _alias_dupe
 
 sub _exact_dupe
 {
-    my ($deduper,$full_key,%seen_exact_dupes) = @_;
+    my $deduper = shift;
+    my ($full_key,%seen_exact_dupes) = @_;
     # problem with unitialized value, set to undef??
     if ( $seen_exact_dupes{$full_key} )
     {
-        return(1);
+        return($seen_exact_dupes{$full_key});
     }
     else
     {
@@ -770,14 +942,13 @@ sub _exact_dupe
 
 sub _read_one_record
 {
-    my ($storage_type,$record_number,$input_array_ref,$file_handles_ref) = @_;
+    my ($storage_type,$current_record_number,$input_array_ref,$input_fh) = @_;
 
     my $finished = 0;
     my $current_line;
 
     if ( $storage_type eq 'file' )
     {
-        my $input_fh = $file_handles_ref->{input};
         if ( $current_line = $input_fh->getline )
         {
             chomp($current_line);
@@ -794,13 +965,13 @@ sub _read_one_record
     }
     elsif ( $storage_type eq 'array' )
     {
-        $current_line =  @$input_array_ref[$record_number];
+        $current_line =  @$input_array_ref[$current_record_number];
         my $last_element =  @$input_array_ref - 1;
-        if ( $record_number == $last_element )
+        if ( $current_record_number == $last_element )
         {
             $finished = 1;
         }
-        elsif ( $record_number > $last_element )
+        elsif ( $current_record_number > $last_element )
         {
             warn "You are trying to access beyond the input array boundaries";
             $finished = 1;
@@ -814,23 +985,89 @@ sub _read_one_record
     return($current_line,$finished);
 }
 
+
+#-------------------------------------------------------------------------------
+# 
+
+sub _classify_record
+{
+    my ($dupe_type,$parent_record_number,$current_record_number,$full_key,$master_record_index) = @_;
+    $master_record_index->{$current_record_number}{key} = $full_key;
+    $master_record_index->{$current_record_number}{parent} = $parent_record_number;
+    $master_record_index->{$current_record_number}{type} = $dupe_type;
+
+    # If there is a parent, update it now, so that is marked as the first
+    # dupe in a set (of current type alias, indentical etc). Note that
+    # a record can be parent to several record types, eg alias and indentical
+    # Currently only updating from last child, but may want to record all in future. 
+
+    if ( $parent_record_number )
+    {
+        $master_record_index->{$parent_record_number}{type} = $dupe_type;
+        $master_record_index->{$parent_record_number}{parent} = 0;
+    }
+}
+
+#-------------------------------------------------------------------------------
+# 
+
+sub _separate
+{
+    my $deduper = shift;
+    my ($storage_type,$master_record_index_ref,$input_array_ref,$input_fh,$unique_fh,$dupes_fh) = @_;
+
+    if ( $storage_type eq 'file' )
+    {
+        _rewind_file($input_fh);
+    }
+
+    my $unique_ref = [];
+    my $dupe_ref = [];
+
+
+    my $current_record_number = 0;
+    my $current_line;
+    my $finished = 0;
+
+
+    while ( not $finished )
+    {
+        my $current_line;
+        ($current_line,$finished) = _read_one_record($storage_type,$current_record_number,$input_array_ref,$input_fh);
+        $current_record_number++;
+        my $dupe_type = $master_record_index_ref->{$current_record_number}{type};
+        my $parent_record_number = $master_record_index_ref->{$current_record_number}{parent};
+
+        # The first duplicate in a set of 1 or more dupes (the parent), is treated as a unique record
+        # TO DO!!! allow user to define this initial dupe as not unique, and group with it's childeren dupes
+        # TO DO!!! separate out to alias, soundex dupes to their own file if needed
+        if (  $parent_record_number == 0  )
+        {
+            $dupe_type = 'unique';
+        }
+
+        _write_one_record($storage_type,$dupe_type,$current_line,$unique_ref,$dupe_ref,$input_fh,$unique_fh,$dupes_fh);
+    }
+    return($unique_ref,$dupe_ref);
+
+}
 #-------------------------------------------------------------------------------
 # 
 
 sub _write_one_record
 {
-    my ($storage_type,$dupe_type,$current_line,$file_handles_ref,$unique_ref,$dupe_ref) = @_;
+    my ($storage_type,$dupe_type,$current_line,$unique_ref,$dupe_ref,$input_fh,$unique_fh,$dupes_fh) = @_;
 
     if ( $storage_type eq 'file' )
     {
+
         if ( $dupe_type eq 'unique' )
         {
-            $file_handles_ref->{output_unique}->print("$current_line\n");
+            $unique_fh->print("$current_line\n");
         }
-        elsif ( $dupe_type =~ /dupe/ )
+        else
         {
-            # TO DO!!! separate out to alias, soundex dupes etc if needed
-            $file_handles_ref->{output_dupe}->print("$current_line\n");
+            $dupes_fh->print("$current_line\n");
         }
     }
     elsif ( $storage_type eq 'array' )
@@ -839,14 +1076,14 @@ sub _write_one_record
         {
             push(@$unique_ref,$current_line);
         }
-        elsif ( $dupe_type =~ /dupe/ )
+        else
         {
             # TO DO!!! separate out to alias, soundex dupes etc if needed
             push(@$dupe_ref,$current_line);
         }
     }
- 
-
 }
+
+
 1;
 

@@ -15,14 +15,20 @@ SYNOPSIS
     $deduper->field_separator(',');
     $deduper->add_key(field_number => 1, ignore_case => 1 );
     $deduper->add_key(field_number => 2, ignore_whitespace => 1);
+    # unique records go to file names_uniqs.csv, dupes to names_dupes.csv
+    $deduper->dedupe_file('names.csv');
 
     # Find 'near' dupes by allowing for given name aliases
     my %nick_names = (Bob => 'Robert',Rob => 'Robert');
     my $near_deduper = new Text::Record::Deduper();
     $near_deduper->add_key(field_number => 2, alias => \%nick_names) or die;
-    $near_deduper->dedupe_file("names.txt");
+    $near_deduper->dedupe_file('names.txt');
 
-    # Now find 'near' dupes in an array of records
+    # Create a text report, names_report.txt to identify all duplicates
+    $near_deduper->report_file('names.txt',all_records => 1);
+
+    # Find 'near' dupes in an array of records, returning references 
+    # to a unique and a duplicate array
     my ($uniqs,$dupes) = $near_deduper->dedupe_array(\@some_records);
 
 

@@ -1,5 +1,10 @@
 Revision history for Perl extension Text::Record::Deduper.
 
+0.05  Sep 04 2005
+    - Added report_file method
+    - Added report_array method
+    - Used an analysis stage to classify all records, prior to reporting or separating records
+
 0.04  Aug 16 2005
     - Moved module namespace from Text::RecordDeduper to Text::Record::Deduper
     - got alias duplicates to work correctly
