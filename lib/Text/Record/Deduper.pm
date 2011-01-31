@@ -31,12 +31,15 @@ Text::Record::Deduper - Separate complete, partial and near duplicate text recor
     # to a unique and a duplicate array
     my ($uniqs,$dupes) = $near_deduper->dedupe_array(\@some_records);
 
+    # Create a report on unique and duplicate records
+    $deduper->report_file("orig.txt",all_records => 0);
 
 
 =head1 DESCRIPTION
 
 This module allows you to take a text file of records and split it into 
-a file of unique and a file of duplicate records.
+a file of unique and a file of duplicate records. Deduping of arrays is
+also possible.
 
 Records are defined as a set of fields. Fields may be separated by spaces, 
 commas, tabs or any other delimiter. Records are separated by a new line.
@@ -297,12 +300,11 @@ Text::Record::Deduper was written by Kim Ryan <kimryan at cpan d o t org>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2005 Kim Ryan. 
+Copyright (C) 2011 Kim Ryan. 
 
 
 This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.4 or,
-at your option, any later version of Perl 5 you may have available.
+it under the same terms as Perl itself.
 
 
 =cut
@@ -315,14 +317,13 @@ use Data::Dumper;
 
 
 
-use 5.008004;
 use strict;
 use warnings;
 
 require Exporter;
 
 our @ISA = qw(Exporter);
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 
 #-------------------------------------------------------------------------------
