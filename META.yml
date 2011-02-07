@@ -1,10 +1,10 @@
 --- #YAML:1.0
 name:               Text-Record-Deduper
-version:            0.06
+version:            0.07
 abstract:           Separate complete, partial and near duplicate text records
 author:
     - Kim Ryan
-license:            unknown
+license:            perl
 distribution_type:  module
 configure_requires:
     ExtUtils::MakeMaker:  0

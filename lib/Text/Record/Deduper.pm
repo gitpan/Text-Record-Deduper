@@ -323,7 +323,7 @@ use warnings;
 require Exporter;
 
 our @ISA = qw(Exporter);
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 
 #-------------------------------------------------------------------------------
@@ -336,7 +336,6 @@ sub new
 
     my $deduper = {};
     bless($deduper,$class);
-
 
     # Default to no separator, until we find otherwise
     $deduper->{field_separator} = '';
@@ -362,7 +361,7 @@ sub field_separator
     return($deduper);
 }
 #-------------------------------------------------------------------------------
-#  
+# Dewfine a key field in  the record 
 sub add_key
 {
     my $deduper = shift;
@@ -499,7 +498,7 @@ sub dedupe_array
     return($uniq_array_ref,$dupe_array_ref);
 }
 #-------------------------------------------------------------------------------
-#                  
+#  Produce a text report on deduping statistics                
 sub report_file
 {
 
